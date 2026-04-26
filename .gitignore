@@ -1,0 +1,22 @@
+# Model weights
+*.safetensors
+*.ckpt
+*.pt
+*.bin
+
+# Python
+__pycache__/
+*.pyc
+.env
+venv/
+.venv/
+
+# Results
+results/
+
+# OS
+.DS_Store
+*/.DS_Store
+
+# Initial raw images (keep processed ones)
+data/initial_images/

@@ -4,7 +4,7 @@ from PIL import Image
 INPUT_DIR = "data/initial_images"
 OUTPUT_DIR = "data/images"
 CAPTION_DIR = "data/captions"
-CAPTION_TEXT = "a photo of <muskan> person"
+CAPTION_TEXT = "a photo of <zendaya> person"
 TARGET_SIZE = 512
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
