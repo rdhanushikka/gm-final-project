@@ -10,15 +10,17 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--generated_dir", type=str, required=True, help="Directory of generated images")
     parser.add_argument("--training_dir", type=str, required=True, help="Directory of training images")
+    parser.add_argument("--prefix", type=str, default=None, help="Filter generated images by filename prefix (e.g. 'baseline' or 'lora')")
     parser.add_argument("--prompts", type=str, nargs="+", help="Prompts used for generation (for CLIP score)")
     return parser.parse_args()
 
 
-def load_images(directory):
+def load_images(directory, prefix=None):
     paths = sorted([
         os.path.join(directory, f)
         for f in os.listdir(directory)
         if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        and (prefix is None or f.startswith(prefix))
     ])
     return paths
 
@@ -85,7 +87,7 @@ def main():
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    gen_paths = load_images(args.generated_dir)
+    gen_paths = load_images(args.generated_dir, prefix=args.prefix)
     train_paths = load_images(args.training_dir)
 
     print(f"Generated images: {len(gen_paths)}")
