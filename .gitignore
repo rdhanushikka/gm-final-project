@@ -15,6 +15,7 @@ venv/
 results/*
 !results/failed_runs/
 !results/lora/
+!results/ti/
 
 # OS
 .DS_Store
