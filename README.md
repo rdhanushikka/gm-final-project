@@ -9,80 +9,159 @@ Comparing LoRA and Textual Inversion for identity-preserving image generation us
 ```
 gm-final-project/
 ├── data/
-│   ├── initial_images/   # Raw source images (not tracked by git)
-│   ├── images/           # Preprocessed 512x512 training images
-│   └── captions/         # Per-image caption .txt files
-├── lora/                 # LoRA training loop (Dhanushikka)
-├── textual_inversion/    # Textual Inversion training loop (Nicole)
-├── evaluation/           # ArcFace + CLIP evaluation scripts
+│   ├── initial_images/      # Raw source images (not tracked by git)
+│   ├── images/              # Preprocessed 512x512 Zendaya training images
+│   └── captions/            # Per-image caption .txt files
+├── niffle-data/
+│   ├── images/              # Niffle hand-drawn character images
+│   └── captions/            # Per-image caption .txt files
+├── lora/
+│   └── train.py             # Custom LoRA training loop (Dhanushikka)
+├── textual_inversion/       # Textual Inversion training (Nicole)
+├── evaluation/
+│   └── eval.py              # ArcFace + CLIP evaluation script
+├── notebooks/
+│   └── ti_main.ipynb        # Textual Inversion Colab notebook (Nicole)
+├── lora_testing.ipynb       # LoRA Colab notebook (Dhanushikka)
 ├── results/
-│   ├── lora/             # Generated images from LoRA
-│   ├── textual_inversion/
-│   └── failed_runs/      # Examples of failed/overfit training runs
-├── notebooks/            # Colab notebooks
-└── preprocess.py         # Image preprocessing script
+│   ├── lora/generated/      # Generated images from LoRA (baseline + lora)
+│   ├── textual_inversion/   # Generated images from TI
+│   └── failed_runs/         # Overfit failure example
+└── preprocess.py            # Image preprocessing script
 ```
 
-## Subject: Zendaya
+## Subjects
 
-Training subject is Zendaya (19 images). Token: `<zendaya>`.
+- **Zendaya** — 19 photographs, token `<zendaya>`, uniform caption `"a photo of <zendaya> person"`
+- **Niffle** — 16 hand-drawn illustrations of an original giraffe character, per-image descriptive captions
 
-### Why we switched from a private individual to a celebrity
+## Running on Google Colab (T4 GPU required)
 
-Initial training was done on a private individual (Muskan) with the token `<muskan>`. The first run used incorrect hyperparameters — 50 epochs and learning rate 1e-4 — which caused severe overfitting. The model collapsed entirely: instead of learning the subject's face, it generated a distorted bearded man with hollow black eyes (see `results/failed_runs/muskan_overfit_example.png`). This is a known failure mode when LoRA training runs too long at too high a learning rate on a small dataset.
+### Step 1: Setup
 
-We switched to Zendaya for two reasons:
-1. We did not want to continue generating disturbing images of a real private individual.
-2. Zendaya's photos offer better variety (19 images across different hair styles, lighting, and outfits), which produces a more robust training set.
+```python
+# Clone diffusers from source (required for training script)
+!git clone https://github.com/huggingface/diffusers.git
+!pip install /content/diffusers
+!pip install peft accelerate transformers
+!pip install --upgrade torchao
 
-**Limitation:** SD v1.5 was pretrained on LAION-5B, which likely includes images of Zendaya. This means the base model has prior knowledge of her appearance, which we acknowledge as a confound in our evaluation. The LoRA vs. Textual Inversion comparison remains valid, but absolute identity similarity scores may be inflated relative to an unknown subject.
+# Clone this repo
+!git clone https://github.com/rdhanushikka/gm-final-project.git /content/gm-final-project
 
-## Hyperparameters (LoRA)
+# Mount Google Drive (for saving outputs)
+from google.colab import drive
+drive.mount('/content/drive')
+```
+
+### Step 2: Preprocessing
+
+```python
+!python /content/gm-final-project/preprocess.py
+```
+
+This reads images from `data/initial_images/`, center-crops to square, resizes to 512×512, and writes outputs to `data/images/` and `data/captions/`.
+
+### Step 3: LoRA Training (Custom)
+
+```python
+!python /content/gm-final-project/lora/train.py \
+  --data_dir /content/gm-final-project/data/images \
+  --caption_dir /content/gm-final-project/data/captions \
+  --output_dir /content/drive/MyDrive/results/lora_custom \
+  --num_epochs 20 \
+  --learning_rate 5e-5 \
+  --lora_rank 16
+```
+
+### Step 4: Inference
+
+```python
+from diffusers import StableDiffusionPipeline
+import torch, os
+
+pipe = StableDiffusionPipeline.from_pretrained(
+    "runwayml/stable-diffusion-v1-5",
+    torch_dtype=torch.float32,
+    safety_checker=None
+).to("cuda")
+
+prompts = [
+    "a close-up portrait of <zendaya> person smiling",
+    "a close-up portrait of <zendaya> person with curly hair",
+    "a close-up portrait of <zendaya> person outdoors in sunlight",
+    "a studio headshot of <zendaya> person",
+    "a close-up portrait of <zendaya> person with a neutral expression",
+]
+
+os.makedirs("/content/drive/MyDrive/results/lora_custom/generated", exist_ok=True)
+
+# Baseline — no LoRA
+for i, prompt in enumerate(prompts):
+    image = pipe(prompt, negative_prompt="full body, cropped face, low quality, blurry",
+                 num_inference_steps=30, guidance_scale=7.5).images[0]
+    image.save(f"/content/drive/MyDrive/results/lora_custom/generated/baseline_{i+1}.png")
+
+# With LoRA
+pipe.load_lora_weights("/content/drive/MyDrive/results/lora_custom")
+for i, prompt in enumerate(prompts):
+    image = pipe(prompt, negative_prompt="full body, cropped face, low quality, blurry",
+                 num_inference_steps=30, guidance_scale=7.5).images[0]
+    image.save(f"/content/drive/MyDrive/results/lora_custom/generated/lora_{i+1}.png")
+```
+
+### Step 5: Evaluation
+
+```python
+!pip install insightface onnxruntime open_clip_torch
+
+# ArcFace + CLIP on LoRA results
+!python /content/gm-final-project/evaluation/eval.py \
+  --generated_dir /content/drive/MyDrive/results/lora_custom/generated \
+  --training_dir /content/gm-final-project/data/images \
+  --prefix lora \
+  --prompts \
+    "a close-up portrait of <zendaya> person smiling" \
+    "a close-up portrait of <zendaya> person with curly hair" \
+    "a close-up portrait of <zendaya> person outdoors in sunlight" \
+    "a studio headshot of <zendaya> person" \
+    "a close-up portrait of <zendaya> person with a neutral expression"
+
+# ArcFace + CLIP on baseline results
+!python /content/gm-final-project/evaluation/eval.py \
+  --generated_dir /content/drive/MyDrive/results/lora_custom/generated \
+  --training_dir /content/gm-final-project/data/images \
+  --prefix baseline \
+  --prompts \
+    "a close-up portrait of <zendaya> person smiling" \
+    "a close-up portrait of <zendaya> person with curly hair" \
+    "a close-up portrait of <zendaya> person outdoors in sunlight" \
+    "a studio headshot of <zendaya> person" \
+    "a close-up portrait of <zendaya> person with a neutral expression"
+```
+
+## Results (Zendaya)
+
+| Method | ArcFace ↑ | CLIP ↑ |
+|---|---|---|
+| Baseline (SD v1.5) | 0.2495 | 0.3176 |
+| Textual Inversion | 0.2141 | 0.3230 |
+| LoRA | **0.2752** | **0.3186** |
+
+## LoRA Hyperparameters
 
 | Parameter | Value |
 |---|---|
 | Base model | runwayml/stable-diffusion-v1-5 |
+| LoRA rank | 16 |
 | Epochs | 20 |
 | Learning rate | 5e-5 |
-| Resolution | 512x512 |
+| Resolution | 512×512 |
 | Batch size | 1 |
-| Mixed precision | fp16 |
+| Trainable params | ~797K / 860M (0.09%) |
 
-## Setup
+## Why we switched from a private subject to a celebrity
 
-```bash
-pip install diffusers transformers accelerate torch torchvision peft
-pip install insightface onnxruntime open_clip_torch
-```
+Initial training on a private individual (Muskan) with 50 epochs at lr=1e-4 caused severe training instability. The model forgot the subject's face entirely and generated a distorted bearded man with hollow black eyes (see `results/failed_runs/muskan_overfit_example.png`). We reduced to 20 epochs and lr=5e-5, and switched to Zendaya for a more diverse training set.
 
-## Running LoRA Training
-
-```bash
-accelerate launch diffusers/examples/dreambooth/train_dreambooth_lora.py \
-  --pretrained_model_name_or_path=runwayml/stable-diffusion-v1-5 \
-  --instance_data_dir=data/images \
-  --instance_prompt="a photo of <zendaya> person" \
-  --output_dir=results/lora \
-  --train_batch_size=1 \
-  --num_train_epochs=20 \
-  --learning_rate=5e-5 \
-  --mixed_precision=fp16 \
-  --resolution=512
-```
-
-## Running Textual Inversion
-
-```bash
-python textual_inversion/train.py \
-    --data_dir data/images \
-    --placeholder_token "<zendaya>" \
-    --output_dir results/textual_inversion
-```
-
-## Evaluation
-
-```bash
-python evaluation/eval.py \
-    --generated_dir results/lora \
-    --training_dir data/images
-```
+**Note:** SD v1.5 was pretrained on LAION-5B which likely includes Zendaya's images. This is a known confound — see the Niffle experiments for a cleaner evaluation.
